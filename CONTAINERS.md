@@ -9,36 +9,34 @@
   - `REACT_APP_WS_URL` (WebSocket)
   - `REACT_APP_API_BASE` / `REACT_APP_BACKEND_URL` (HTTP)
 
-## Containers that need to be created (to support MERN + Socket.IO + MongoDB)
+## Existing containers (updated)
+
+### 1) `frontend/` (React)
+- Path: `real-time-oee-monitoring-system-78-87/frontend`
+- Purpose: Web UI for real-time OEE monitoring.
+- Current behavior: Can run with mock data, and optionally connect to backend via env vars:
+  - `REACT_APP_WS_URL` (WebSocket)
+  - `REACT_APP_API_BASE` / `REACT_APP_BACKEND_URL` (HTTP)
 
 ### 2) `backend/` (Node.js + Express + Socket.IO)
-Recommended new container directory:
 - Path: `real-time-oee-monitoring-system-78-87/backend`
-
-Responsibilities:
-- REST API (Express)
-- Authentication:
-  - JWT login/register
-  - Password hashing (bcrypt)
-  - Role-based access control (RBAC) middleware (e.g., admin/supervisor/operator/viewer)
+- Purpose: REST API + JWT auth + RBAC + real-time updates + PDF export.
+- Major endpoints:
+  - `GET /health`
+  - `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
+  - `POST /api/runs/start`, `POST /api/runs/stop`, `GET /api/runs`
+  - `POST /api/downtime`, `GET /api/downtime`
+  - `POST /api/quality`, `GET /api/quality`
+  - `GET /api/oee/realtime`
+  - `GET /api/reports/shift-handover.pdf`
 - Real-time:
-  - Socket.IO server for streaming OEE snapshots, events, alerts, and production updates
-  - Room/topic model by line/area/plant
-- Data layer:
-  - MongoDB persistence (Mongoose recommended)
-- Reporting:
-  - Generate PDF handover reports (e.g., via pdfkit/puppeteer) exposed as an API endpoint
-- Operational:
-  - Health endpoint (`GET /health`)
-  - CORS configuration for frontend preview URL(s)
+  - Socket.IO server at `/socket.io`
+  - Rooms: `line:<lineId>`
+  - Events: `oee:snapshot`, `alert:new`, `run:updated`, `downtime:created`, `quality:created`
+- Backend env vars (see `backend/.env.example`):
+  - `PORT`, `NODE_ENV`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGINS`, `OEE_ALERT_THRESHOLD`, ...
 
-Typical environment variables (backend):
-- `PORT`
-- `NODE_ENV`
-- `MONGODB_URI`
-- `JWT_SECRET`
-- `CORS_ORIGINS` (comma-separated)
-- Optional: `LOG_LEVEL`, `TRUST_PROXY`
+## Containers that still need to be created
 
 ### 3) `database/` (MongoDB)
 This can be either:

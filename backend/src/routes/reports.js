@@ -1,0 +1,144 @@
+const express = require("express");
+const PDFDocument = require("pdfkit");
+const { requireAuth } = require("../auth/jwt");
+const { requireRole } = require("../auth/rbac");
+const ProductionRun = require("../models/ProductionRun");
+const DowntimeEvent = require("../models/DowntimeEvent");
+const QualityEvent = require("../models/QualityEvent");
+const { computeOeeForRun } = require("../services/oee");
+
+function topDowntimeReasons(downtimeEvents) {
+  const counts = new Map();
+  for (const e of downtimeEvents) {
+    const key = e.reason || "unknown";
+    counts.set(key, (counts.get(key) || 0) + (Number(e.durationMinutes) || 0));
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, minutes]) => ({ reason, minutes }));
+}
+
+function routerFactory(cfg) {
+  const router = express.Router();
+
+  // GET /api/reports/shift-handover.pdf?lineId=...&shiftStart=...&shiftEnd=...
+  router.get("/shift-handover.pdf", requireAuth(cfg), requireRole("manager"), async (req, res) => {
+    const lineId = String(req.query.lineId || "");
+    const shiftStart = req.query.shiftStart ? new Date(String(req.query.shiftStart)) : null;
+    const shiftEnd = req.query.shiftEnd ? new Date(String(req.query.shiftEnd)) : null;
+
+    if (!lineId || !shiftStart || !shiftEnd || Number.isNaN(shiftStart.getTime()) || Number.isNaN(shiftEnd.getTime())) {
+      return res.status(400).json({ error: "lineId, shiftStart, shiftEnd are required (ISO datetime strings)" });
+    }
+
+    // Collect runs in shift window
+    const runs = await ProductionRun.find({
+      lineId,
+      startTime: { $gte: shiftStart, $lte: shiftEnd },
+    })
+      .sort({ startTime: 1 })
+      .lean();
+
+    // Aggregate totals for report
+    let sumAvailability = 0;
+    let sumPerformance = 0;
+    let sumQuality = 0;
+    let sumOee = 0;
+    let runsCount = 0;
+
+    let totalUnits = 0;
+    let totalRejects = 0;
+
+    const allDowntime = [];
+    for (const run of runs) {
+      const dt = await DowntimeEvent.find({ runId: run._id }).lean();
+      allDowntime.push(...dt);
+
+      const oee = computeOeeForRun({ run, downtimeEvents: dt });
+      sumAvailability += oee.availability;
+      sumPerformance += oee.performance;
+      sumQuality += oee.quality;
+      sumOee += oee.oee;
+      runsCount += 1;
+
+      totalUnits += (Number(run.goodUnits) || 0) + (Number(run.rejectUnits) || 0);
+      totalRejects += Number(run.rejectUnits) || 0;
+    }
+
+    // Quality events for shift (optional for details)
+    const qualityEvents = await QualityEvent.find({
+      lineId,
+      occurredAt: { $gte: shiftStart, $lte: shiftEnd },
+    })
+      .sort({ occurredAt: -1 })
+      .limit(25)
+      .lean();
+
+    const avg = (x) => (runsCount > 0 ? x / runsCount : 0);
+
+    const top3 = topDowntimeReasons(allDowntime);
+
+    // Build PDF
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="shift-handover_${lineId}_${shiftStart.toISOString()}_${shiftEnd.toISOString()}.pdf"`
+    );
+
+    const doc = new PDFDocument({ margin: 48 });
+    doc.pipe(res);
+
+    doc.fontSize(18).text("Shift Handover Report", { bold: true });
+    doc.moveDown(0.5);
+    doc.fontSize(11).fillColor("#444").text(`Line: ${lineId}`);
+    doc.text(`Shift: ${shiftStart.toISOString()} → ${shiftEnd.toISOString()}`);
+    doc.moveDown(1);
+
+    doc.fillColor("#111").fontSize(13).text("OEE Summary");
+    doc.moveDown(0.5);
+    doc.fontSize(11).text(`OEE (avg): ${Math.round(avg(sumOee) * 100)}%`);
+    doc.text(`Availability (avg): ${Math.round(avg(sumAvailability) * 100)}%`);
+    doc.text(`Performance (avg): ${Math.round(avg(sumPerformance) * 100)}%`);
+    doc.text(`Quality (avg): ${Math.round(avg(sumQuality) * 100)}%`);
+
+    doc.moveDown(1);
+    doc.fontSize(13).text("Production Summary");
+    doc.moveDown(0.5);
+    doc.fontSize(11).text(`Units produced (total): ${totalUnits}`);
+    doc.text(`Units rejected (total): ${totalRejects}`);
+
+    doc.moveDown(1);
+    doc.fontSize(13).text("Top 3 Downtime Reasons (by minutes)");
+    doc.moveDown(0.5);
+    if (!top3.length) {
+      doc.fontSize(11).fillColor("#444").text("No downtime logged.");
+    } else {
+      doc.fillColor("#111");
+      for (const item of top3) doc.fontSize(11).text(`- ${item.reason}: ${Math.round(item.minutes)} min`);
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(13).text("Recent Quality Events (up to 25)");
+    doc.moveDown(0.5);
+    if (!qualityEvents.length) {
+      doc.fontSize(11).fillColor("#444").text("No quality events logged.");
+    } else {
+      doc.fillColor("#111");
+      for (const e of qualityEvents) {
+        doc.fontSize(10).text(
+          `${new Date(e.occurredAt).toISOString()} · rejects=${e.rejectedUnits} · reason=${e.defectReason}`
+        );
+      }
+    }
+
+    doc.moveDown(1.5);
+    doc.fontSize(9).fillColor("#666").text("Generated by OEE Real-Time Production Performance Monitor");
+
+    doc.end();
+  });
+
+  return router;
+}
+
+module.exports = { routerFactory };
