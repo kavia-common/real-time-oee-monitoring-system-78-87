@@ -1,255 +1,163 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect } from "react";
 import "./App.css";
 
-import { useOeeStream } from "./data/useOeeStream";
-import { formatPercent, formatTimestampTime } from "./utils/format";
+import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
+import RequireRole from "./auth/RequireRole";
 
-import Sidebar from "./components/layout/Sidebar";
-import TopBar from "./components/layout/TopBar";
-import KpiCard from "./components/kpi/KpiCard";
-import TrendChart from "./components/charts/TrendChart";
-import NotificationsPanel from "./components/notifications/NotificationsPanel";
-import StatusPill from "./components/common/StatusPill";
+import OperatorDashboard from "./pages/OperatorDashboard";
+import SupervisorDashboard from "./pages/SupervisorDashboard";
+import ManagerDashboard from "./pages/ManagerDashboard";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import UnauthorizedPage from "./pages/UnauthorizedPage";
 
-// PUBLIC_INTERFACE
-function App() {
-  /** Main app entrypoint for the OEE dashboard UI.
-   *
-   * Uses a resilient data hook that prefers real backend/WS if configured via env vars,
-   * but falls back to mock real-time data generation otherwise.
-   *
-   * Returns:
-   *  - React element tree rendering the full dashboard.
-   */
-  const [activeNav, setActiveNav] = useState("dashboard");
-
-  const [selectedLineId, setSelectedLineId] = useState("line-1");
-  const [timeRange, setTimeRange] = useState("15m"); // 15m | 1h | 8h | 24h
-
-  const {
-    status,
-    snapshot,
-    series,
-    events,
-    lastUpdatedAt,
-    source,
-    error,
-    reconnect,
-  } = useOeeStream({
-    lineId: selectedLineId,
-    timeRange,
-  });
-
-  // Keep the document title in sync with the app
-  useEffect(() => {
-    document.title = "Ocean OEE Monitor";
-  }, []);
-
-  const kpis = useMemo(() => {
-    const s = snapshot?.kpis;
-    if (!s) return null;
-    return [
-      {
-        key: "availability",
-        title: "Availability",
-        value: s.availability,
-        hint: "Uptime vs. planned time",
-        color: "blue",
-      },
-      {
-        key: "performance",
-        title: "Performance",
-        value: s.performance,
-        hint: "Actual vs. ideal speed",
-        color: "amber",
-      },
-      {
-        key: "quality",
-        title: "Quality",
-        value: s.quality,
-        hint: "Good count vs. total",
-        color: "blue",
-      },
-      {
-        key: "oee",
-        title: "OEE",
-        value: s.oee,
-        hint: "Availability × Performance × Quality",
-        color: "amber",
-        emphasized: true,
-      },
-    ];
-  }, [snapshot]);
-
-  const hasAnyData = Boolean(snapshot) && (series?.length ?? 0) > 0;
+function Shell({ children }) {
+  const { user, logout } = useAuth();
 
   return (
     <div className="appShell">
-      <Sidebar active={activeNav} onSelect={setActiveNav} />
-
-      <div className="appMain">
-        <TopBar
-          title="Real-time OEE Dashboard"
-          subtitle="Ocean Professional theme · live shop-floor visibility"
-          source={source}
-          status={status}
-          lastUpdatedAt={lastUpdatedAt}
-          selectedLineId={selectedLineId}
-          timeRange={timeRange}
-          onChangeLine={setSelectedLineId}
-          onChangeTimeRange={setTimeRange}
-          onReconnect={reconnect}
-        />
-
-        <main className="contentGrid" aria-label="OEE dashboard content">
-          <section className="kpiGrid" aria-label="Key performance indicators">
-            {kpis ? (
-              kpis.map((k) => (
-                <KpiCard
-                  key={k.key}
-                  title={k.title}
-                  value={k.value}
-                  valueLabel={formatPercent(k.value)}
-                  hint={k.hint}
-                  color={k.color}
-                  emphasized={k.emphasized}
-                  trend={snapshot?.trends?.[k.key] ?? null}
-                />
-              ))
-            ) : (
-              <>
-                <KpiCard loading />
-                <KpiCard loading />
-                <KpiCard loading />
-                <KpiCard loading />
-              </>
-            )}
-          </section>
-
-          <section className="card chartCard" aria-label="OEE trend chart">
-            <div className="cardHeader">
-              <div className="cardHeaderTitle">
-                <h2>OEE trend</h2>
-                <p>
-                  {selectedLineId.toUpperCase()} · {timeRange} window
-                </p>
-              </div>
-              <div className="cardHeaderMeta">
-                <StatusPill
-                  status={status}
-                  label={
-                    status === "connected"
-                      ? "Live"
-                      : status === "connecting"
-                        ? "Connecting"
-                        : status === "error"
-                          ? "Error"
-                          : "Idle"
-                  }
-                />
-                <div className="metaText" aria-label="Last update timestamp">
-                  {lastUpdatedAt ? (
-                    <>
-                      Updated{" "}
-                      <span className="mono">
-                        {formatTimestampTime(lastUpdatedAt)}
-                      </span>
-                    </>
-                  ) : (
-                    "Waiting for data…"
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="cardBody">
-              {status === "error" ? (
-                <div className="state stateError" role="alert">
-                  <div className="stateTitle">Data connection error</div>
-                  <div className="stateText">
-                    {error?.message ??
-                      "Unable to load live data right now. The app will keep trying."}
-                  </div>
-                  <div className="stateActions">
-                    <button className="btnPrimary" onClick={reconnect}>
-                      Retry
-                    </button>
-                  </div>
-                </div>
-              ) : !hasAnyData && status !== "connecting" ? (
-                <div className="state stateEmpty">
-                  <div className="stateTitle">No data yet</div>
-                  <div className="stateText">
-                    Select a different line or time range, or wait for the next
-                    update.
-                  </div>
-                </div>
-              ) : (
-                <TrendChart
-                  series={series}
-                  width={0}
-                  height={0}
-                  ariaLabel="OEE time series chart"
-                />
-              )}
-
-              <div className="chartLegend" aria-label="Chart legend">
-                <div className="legendItem">
-                  <span className="dot dotBlue" aria-hidden="true" />
-                  OEE
-                </div>
-                <div className="legendItem">
-                  <span className="dot dotAmber" aria-hidden="true" />
-                  Availability
-                </div>
-                <div className="legendItem">
-                  <span className="dot dotGray" aria-hidden="true" />
-                  Performance
-                </div>
-                <div className="legendItem">
-                  <span className="dot dotTeal" aria-hidden="true" />
-                  Quality
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="card eventsCard" aria-label="Notifications panel">
-            <div className="cardHeader">
-              <div className="cardHeaderTitle">
-                <h2>Events & notifications</h2>
-                <p>Downtime, speed loss, quality alarms</p>
-              </div>
-              <div className="cardHeaderMeta">
-                <span className="metaTag" title="Data source">
-                  Source: <span className="mono">{source}</span>
-                </span>
-              </div>
-            </div>
-            <div className="cardBody cardBodyScroll">
-              <NotificationsPanel events={events} />
-            </div>
-          </section>
-        </main>
-
-        <footer className="appFooter">
-          <div className="footerLeft">
-            <span className="footerBrand">Ocean OEE Monitor</span>
-            <span className="footerSep">•</span>
-            <span className="footerMuted">
-              {source === "mock"
-                ? "Mock real-time stream (no env vars configured)"
-                : "Backend-connected (env vars detected)"}
-            </span>
+      <aside className="sidebar" aria-label="Primary navigation">
+        <div className="sidebarHeader">
+          <div className="brandMark" aria-hidden="true" />
+          <div className="brandText">
+            <div className="brandTitle">Ocean OEE</div>
+            <div className="brandSub">Role-based Monitor</div>
           </div>
-          <div className="footerRight">
-            <span className="footerMuted mono">
-              {process.env.REACT_APP_NODE_ENV ?? "development"}
+        </div>
+
+        <nav className="sidebarNav" aria-label="App sections">
+          <Link className="navItem" to="/" style={{ textDecoration: "none" }}>
+            <span className="navIcon" aria-hidden="true">
+              📈
             </span>
-          </div>
-        </footer>
-      </div>
+            <span className="navLabel">Operator</span>
+            <span className="navHint" aria-hidden="true">
+              O
+            </span>
+          </Link>
+
+          <Link className="navItem" to="/supervisor" style={{ textDecoration: "none" }}>
+            <span className="navIcon" aria-hidden="true">
+              🔔
+            </span>
+            <span className="navLabel">Supervisor</span>
+            <span className="navHint" aria-hidden="true">
+              S
+            </span>
+          </Link>
+
+          <Link className="navItem" to="/manager" style={{ textDecoration: "none" }}>
+            <span className="navIcon" aria-hidden="true">
+              🧾
+            </span>
+            <span className="navLabel">Manager</span>
+            <span className="navHint" aria-hidden="true">
+              M
+            </span>
+          </Link>
+        </nav>
+
+        <div className="sidebarFooter">
+          {user ? (
+            <>
+              <div style={{ fontWeight: 800 }}>Signed in</div>
+              <div style={{ marginTop: 6, opacity: 0.85 }}>
+                <span className="mono">{user.email}</span> · <span className="mono">{user.role}</span>
+              </div>
+              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btnSubtle" onClick={logout}>
+                  Logout
+                </button>
+                <Link className="btnSubtle" to="/login" style={{ textDecoration: "none" }}>
+                  Switch user
+                </Link>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontWeight: 800 }}>Not signed in</div>
+              <div style={{ marginTop: 6, opacity: 0.85 }}>
+                <Link to="/login" style={{ color: "inherit" }}>
+                  Sign in
+                </Link>{" "}
+                to use backend APIs.
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+
+      <div className="appMain">{children}</div>
     </div>
+  );
+}
+
+// PUBLIC_INTERFACE
+function App() {
+  /** App entrypoint: role-based router + auth provider. */
+  useEffect(() => {
+    document.title = "Ocean OEE Monitor (RBAC)";
+  }, []);
+
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/unauthorized" element={<UnauthorizedPage />} />
+
+          <Route
+            path="/"
+            element={
+              <RequireRole minRole="operator">
+                <Shell>
+                  <OperatorDashboard />
+                </Shell>
+              </RequireRole>
+            }
+          />
+
+          <Route
+            path="/supervisor"
+            element={
+              <RequireRole minRole="supervisor">
+                <Shell>
+                  <SupervisorDashboard />
+                </Shell>
+              </RequireRole>
+            }
+          />
+
+          <Route
+            path="/manager"
+            element={
+              <RequireRole minRole="manager">
+                <Shell>
+                  <ManagerDashboard />
+                </Shell>
+              </RequireRole>
+            }
+          />
+
+          <Route
+            path="*"
+            element={
+              <Shell>
+                <div style={{ padding: 22 }}>
+                  <h1 style={{ margin: 0 }}>Not found</h1>
+                  <p style={{ color: "var(--muted)", marginTop: 6 }}>This page does not exist.</p>
+                  <Link to="/" className="btnSubtle" style={{ display: "inline-block", textDecoration: "none" }}>
+                    Back to dashboard
+                  </Link>
+                </div>
+              </Shell>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
 
